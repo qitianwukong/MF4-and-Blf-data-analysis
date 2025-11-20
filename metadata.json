@@ -1,0 +1,5 @@
+{
+  "name": "AutoLog Analytics Pro",
+  "description": "A professional automotive data analysis dashboard for MDF, MF4, and BLF files. Features time-series visualization, statistical analysis, and AI-driven insights.",
+  "requestFramePermissions": []
+}
