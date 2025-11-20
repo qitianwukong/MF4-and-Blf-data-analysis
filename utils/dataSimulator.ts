@@ -3,7 +3,7 @@ import { DataPoint, SignalMetadata } from "../types";
 
 const COLORS = [
   "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#f43f5e",
-  "#6366f1", "#84cc16", "#d946ef", "#0ea5e9"
+  "#6366f1", "#84cc16", "#d946ef", "#0ea5e9", "#a855f7", "#14b8a6", "#f97316", "#d946ef"
 ];
 
 /**
@@ -50,8 +50,9 @@ const generateDataForSignal = (signalName: string, length: number, timeStep: num
   const isSpeed = name.includes('speed') || name.includes('velocity') || name.includes('kmh');
   const isTemp = name.includes('temp') || name.includes('t_');
   const isVoltage = name.includes('volt') || name.includes('batt');
-  const isBinary = name.includes('switch') || name.includes('status') || name.includes('active') || name.includes('on_off');
+  const isBinary = name.includes('switch') || name.includes('status') || name.includes('active') || name.includes('on_off') || name.includes('enable') || name.includes('valid');
   const isPedal = name.includes('pedal') || name.includes('throttle');
+  const isTorque = name.includes('torque') || name.includes('moment');
 
   // Initial values based on type
   if (isRPM) value = 800 + rng.next() * 100;
@@ -59,6 +60,7 @@ const generateDataForSignal = (signalName: string, length: number, timeStep: num
   else if (isTemp) value = 70 + rng.next() * 10;
   else if (isVoltage) value = 12.5;
   else if (isPedal) value = 0;
+  else if (isTorque) value = 0;
   else value = rng.next() * 100;
 
   // Phase offset for sine waves so not all signals look synced
@@ -100,6 +102,9 @@ const generateDataForSignal = (signalName: string, length: number, timeStep: num
     else if (isPedal) {
          value = Math.abs(Math.sin(t / 15 + phase)) * 100 + noise * 2;
          if (value > 100) value = 100;
+    }
+    else if (isTorque) {
+        value = Math.sin(t / 15 + phase) * 300 + noise * 10;
     }
     else {
         // Generic random walk
@@ -156,29 +161,31 @@ const parseDBC = async (file: File): Promise<SignalMetadata[]> => {
  * This is a heuristic method to find signal names in file headers without a full parser.
  */
 const scanBinaryForStrings = async (file: File): Promise<string[]> => {
-  // Read first 2MB or full file if smaller
-  const chunkSize = Math.min(file.size, 2 * 1024 * 1024); 
+  // Read first 3MB to catch larger headers
+  const chunkSize = Math.min(file.size, 3 * 1024 * 1024); 
   const buffer = await file.slice(0, chunkSize).arrayBuffer();
   const bytes = new Uint8Array(buffer);
   
   let strings: string[] = [];
   let currentStr = "";
   
-  // Simple scanner: look for sequences of printable chars length > 4
+  // Simple scanner: look for sequences of printable chars length > 3
   for (let i = 0; i < bytes.length; i++) {
     const b = bytes[i];
-    // Allow A-Z, a-z, 0-9, _, space, dot
+    // Allow A-Z, a-z, 0-9, _, space, dot, dash, brackets
     if ((b >= 32 && b <= 126)) {
       currentStr += String.fromCharCode(b);
     } else {
-      if (currentStr.length > 4) {
-        // Filtering noise: Valid signals usually don't have many spaces or weird chars
-        // MDF4 XML metadata often contains <CN>SignalName</CN>
-        if (/^[a-zA-Z0-9_]+$/.test(currentStr.trim())) {
-             strings.push(currentStr.trim());
-        } else if (currentStr.includes("<CN>")) {
-             // Basic XML tag extraction if present
-             const match = currentStr.match(/<CN>(.*?)<\/CN>/);
+      if (currentStr.length > 3) {
+        // MDF/BLF often have signal names like "Engine_Speed" or "System.State"
+        // Allow letters, numbers, dots, underscores.
+        const cleaned = currentStr.trim();
+        if (/^[a-zA-Z][a-zA-Z0-9_.-]+$/.test(cleaned)) {
+             // Filter out unlikely short garbage
+             if (cleaned.length > 3) strings.push(cleaned);
+        } else if (cleaned.includes("<CN>")) {
+             // Basic XML tag extraction if present in MDF4
+             const match = cleaned.match(/<CN>(.*?)<\/CN>/);
              if (match) strings.push(match[1]);
         }
       }
@@ -187,11 +194,11 @@ const scanBinaryForStrings = async (file: File): Promise<string[]> => {
   }
 
   // Filter common noise strings
-  const blockList = ['MDF4', 'Vector', 'CANape', 'Intel', 'Motorola', 'Version'];
+  const blockList = ['MDF4', 'Vector', 'CANape', 'Intel', 'Motorola', 'Version', 'Format', 'Date', 'Time', 'Program', 'Block'];
   strings = strings.filter(s => 
-    !blockList.includes(s) && 
-    isNaN(Number(s)) && 
-    s.length < 50
+    !blockList.some(bad => s.includes(bad)) && 
+    !/^\d+$/.test(s) && // not just numbers
+    s.length < 60
   );
 
   // Remove duplicates
@@ -205,9 +212,6 @@ export const parseFile = async (file: File, dbcFile: File | null): Promise<{ dat
     
     // 1. Handle CSV (Real Parsing)
     if (file.name.toLowerCase().endsWith('.csv')) {
-        // ... Reuse existing CSV logic but simplified for this example context
-        // For brevity, reusing the previous robust CSV logic is implied, 
-        // but let's include a compact version here to ensure it works.
         const text = await file.text();
         const lines = text.split('\n').filter(l => l.trim() !== '');
         const headers = lines[0].split(',').map(h => h.trim());
@@ -215,7 +219,7 @@ export const parseFile = async (file: File, dbcFile: File | null): Promise<{ dat
         
         const parsedData: DataPoint[] = [];
         let timeIdx = headers.findIndex(h => h.toLowerCase().includes('time') || h.toLowerCase() === 't');
-        if (timeIdx === -1) timeIdx = -2; // flag to gen time
+        if (timeIdx === -1) timeIdx = -2; 
 
         dataRows.forEach((row, i) => {
             const vals = row.split(',');
@@ -243,8 +247,6 @@ export const parseFile = async (file: File, dbcFile: File | null): Promise<{ dat
     }
 
     // 2. Handle Binary (MDF/BLF)
-    // Strategy: Extract Signal Names -> Generate Data for those names
-    
     let extractedSignals: SignalMetadata[] = [];
 
     if (dbcFile) {
@@ -256,19 +258,19 @@ export const parseFile = async (file: File, dbcFile: File | null): Promise<{ dat
     if (extractedSignals.length === 0) {
         const rawStrings = await scanBinaryForStrings(file);
         
-        // If we found strings, use them. If not, fallback to generic CAN IDs (common in raw BLF)
+        // If we found strings, use them (up to 200 to avoid overwhelming UI)
         if (rawStrings.length > 5) {
-            extractedSignals = rawStrings.slice(0, 50).map((s, i) => ({
+            extractedSignals = rawStrings.slice(0, 200).map((s, i) => ({
                 name: s,
                 unit: '-',
                 min: 0, max: 0, avg: 0, stdDev: 0,
                 color: COLORS[i % COLORS.length]
             }));
         } else {
-            // Fallback for Raw BLF without DBC
-            for (let i = 0; i < 10; i++) {
+            // Fallback for Raw BLF without DBC - Increase count to 32
+            for (let i = 0; i < 32; i++) {
                 extractedSignals.push({
-                    name: `CAN_ID_0x${(100 + i * 10).toString(16).toUpperCase()}`,
+                    name: `CAN_CH${i+1}_0x${(200 + i * 5).toString(16).toUpperCase()}`,
                     unit: 'raw',
                     min: 0, max: 0, avg: 0, stdDev: 0,
                     color: COLORS[i % COLORS.length]
@@ -297,7 +299,7 @@ export const parseFile = async (file: File, dbcFile: File | null): Promise<{ dat
         generatedData.push(pt);
     }
 
-    // 4. Update Metadata Stats based on generated data
+    // 4. Update Metadata Stats
     const finalMetadata = extractedSignals.map(sig => {
         const values = columns[sig.name];
         const min = Math.min(...values);
