@@ -2,8 +2,13 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { SignalMetadata, GeminiAnalysisResult } from "../types";
 
 const getClient = () => {
-  const apiKey = process.env.API_KEY;
+  // Support both environment variable styles:
+  // process.env.API_KEY for Node/Online environments
+  // import.meta.env.VITE_API_KEY for local Vite development
+  const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
+  
   if (!apiKey) {
+    console.error("API Key is missing. Please set API_KEY or VITE_API_KEY.");
     throw new Error("API_KEY is not set in environment variables.");
   }
   return new GoogleGenAI({ apiKey });

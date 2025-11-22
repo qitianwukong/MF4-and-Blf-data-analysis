@@ -1,7 +1,8 @@
+
 import React, { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush } from 'recharts';
 import { SignalMetadata, DataPoint, GeminiAnalysisResult, AnalysisStatus } from '../types';
-import { Activity, FileBarChart, Sparkles, AlertTriangle, CheckCircle, Info, Search, CheckSquare, Square } from 'lucide-react';
+import { Activity, FileBarChart, Sparkles, AlertTriangle, CheckCircle, Info, Search, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react';
 import { analyzeVehicleData } from '../services/geminiService';
 
 interface DashboardProps {
@@ -18,6 +19,9 @@ const Dashboard: React.FC<DashboardProps> = ({ data, metadata, fileName }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [analysis, setAnalysis] = useState<GeminiAnalysisResult | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
+  
+  const [isAnomaliesOpen, setIsAnomaliesOpen] = useState(true);
+  const [isRecommendationsOpen, setIsRecommendationsOpen] = useState(true);
 
   const toggleSignal = (name: string) => {
     setSelectedSignals(prev => 
@@ -47,6 +51,9 @@ const Dashboard: React.FC<DashboardProps> = ({ data, metadata, fileName }) => {
       
       const result = await analyzeVehicleData(fileName, signalsToAnalyze);
       setAnalysis(result);
+      // Reset toggles to open when new analysis comes in
+      setIsAnomaliesOpen(true);
+      setIsRecommendationsOpen(true);
       setAnalysisStatus(AnalysisStatus.COMPLETE);
     } catch (e) {
       setAnalysisStatus(AnalysisStatus.ERROR);
@@ -179,7 +186,15 @@ const Dashboard: React.FC<DashboardProps> = ({ data, metadata, fileName }) => {
                       tick={{fontSize: 11, fill: '#71717a'}}
                       tickLine={false}
                       axisLine={{ stroke: '#3f3f46' }}
-                      label={{ value: 'Time (s)', position: 'insideBottomRight', offset: -5, fill: '#71717a', fontSize: 12 }}
+                      label={{ value: 'Time (mm:ss)', position: 'insideBottomRight', offset: -5, fill: '#71717a', fontSize: 12 }}
+                      tickFormatter={(value) => {
+                          if (typeof value === 'number') {
+                              const m = Math.floor(value / 60);
+                              const s = Math.floor(value % 60);
+                              return `${m}:${s.toString().padStart(2, '0')}`;
+                          }
+                          return value;
+                      }}
                     />
                     <YAxis 
                       stroke="#52525b" 
@@ -192,6 +207,19 @@ const Dashboard: React.FC<DashboardProps> = ({ data, metadata, fileName }) => {
                         itemStyle={{ fontSize: '12px', padding: '2px 0' }}
                         labelStyle={{ color: '#a1a1aa', marginBottom: '8px', fontSize: '12px', fontWeight: 600 }}
                         cursor={{ stroke: '#52525b', strokeWidth: 1 }}
+                        labelFormatter={(value) => {
+                            if (typeof value === 'number') {
+                                const m = Math.floor(value / 60);
+                                const s = Math.floor(value % 60);
+                                return `Time: ${m}:${s.toString().padStart(2, '0')} (${value.toFixed(1)}s)`;
+                            }
+                            return `Time: ${value}`;
+                        }}
+                        formatter={(value: number, name: string) => {
+                            const meta = metadata.find(m => m.name === name);
+                            const unitStr = (meta?.unit && meta.unit !== '-' && meta.unit !== '') ? ` ${meta.unit}` : '';
+                            return [`${value}${unitStr}`, name];
+                        }}
                     />
                     <Legend verticalAlign="top" height={36} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '12px', opacity: 0.8 }} />
                     {activeMetadata.map((sig) => (
@@ -204,7 +232,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, metadata, fileName }) => {
                         strokeWidth={1.5}
                         activeDot={{ r: 5, strokeWidth: 0 }}
                         animationDuration={800}
-                        isAnimationActive={false} // Disable animation for performance with many lines
+                        isAnimationActive={false}
                     />
                     ))}
                     <Brush 
@@ -272,30 +300,48 @@ const Dashboard: React.FC<DashboardProps> = ({ data, metadata, fileName }) => {
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4">
-                    <div className="bg-red-950/10 p-4 rounded-lg border border-red-900/20">
-                        <h4 className="text-red-400 text-sm uppercase font-bold tracking-wider mb-2 flex items-center gap-2">
-                            <AlertTriangle className="w-4 h-4" /> Anomalies Detected
-                        </h4>
-                        <ul className="space-y-2">
-                            {analysis.anomalies.map((item, i) => (
-                                <li key={i} className="flex items-start gap-2 text-zinc-300 text-sm">
-                                    <span className="text-red-500 mt-1">•</span> {item}
-                                </li>
-                            ))}
-                        </ul>
+                    <div className="bg-red-950/10 p-4 rounded-lg border border-red-900/20 transition-all">
+                        <button 
+                            onClick={() => setIsAnomaliesOpen(!isAnomaliesOpen)}
+                            className="w-full flex items-center justify-between text-red-400 text-sm uppercase font-bold tracking-wider mb-2 hover:text-red-300 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4" /> Anomalies Detected
+                            </div>
+                            {isAnomaliesOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+                        
+                        {isAnomaliesOpen && (
+                            <ul className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                                {analysis.anomalies.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-zinc-300 text-sm">
+                                        <span className="text-red-500 mt-1">•</span> {item}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
 
-                    <div className="bg-emerald-950/10 p-4 rounded-lg border border-emerald-900/20">
-                        <h4 className="text-emerald-400 text-sm uppercase font-bold tracking-wider mb-2 flex items-center gap-2">
-                            <CheckCircle className="w-4 h-4" /> Recommendations
-                        </h4>
-                        <ul className="space-y-2">
-                            {analysis.recommendations.map((item, i) => (
-                                <li key={i} className="flex items-start gap-2 text-zinc-300 text-sm">
-                                    <span className="text-emerald-500 mt-1">•</span> {item}
-                                </li>
-                            ))}
-                        </ul>
+                    <div className="bg-emerald-950/10 p-4 rounded-lg border border-emerald-900/20 transition-all">
+                        <button 
+                            onClick={() => setIsRecommendationsOpen(!isRecommendationsOpen)}
+                            className="w-full flex items-center justify-between text-emerald-400 text-sm uppercase font-bold tracking-wider mb-2 hover:text-emerald-300 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <CheckCircle className="w-4 h-4" /> Recommendations
+                            </div>
+                            {isRecommendationsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+
+                        {isRecommendationsOpen && (
+                            <ul className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                                {analysis.recommendations.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-zinc-300 text-sm">
+                                        <span className="text-emerald-500 mt-1">•</span> {item}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
                 </div>
               </div>
